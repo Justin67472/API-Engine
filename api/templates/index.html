@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <h2>Document Text Extractor</h2>
+    <input type="file" id="fileInput">
+    <button onclick="extractText()">Extract</button>
+    <pre id="result"></pre>
+
+    <script>
+        async function extractText() {
+            let file = document.getElementById('fileInput').files[0];
+            let formData = new FormData();
+            formData.append('file', file);
+
+            let res = await fetch('/api/extract', { method: 'POST', body: formData });
+            let data = await res.json();
+            document.getElementById('result').innerText = data.content;
+        }
+    </script>
+</body>
+</html>
