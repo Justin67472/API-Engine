@@ -14,7 +14,7 @@ def extract():
     file = request.files['file']
     ext = file.filename.split('.')[-1].lower()
     
-    # Save to a temporary file
+    # Save to the /tmp directory (the only writable space)
     temp = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}")
     file.save(temp.name)
     
@@ -31,9 +31,6 @@ def extract():
             with open(temp.name, 'r', encoding='utf-8') as f:
                 text = f.read()
     finally:
-        os.remove(temp.name) # Cleanup
+        os.remove(temp.name)
         
     return jsonify({"content": text})
-
-if __name__ == '__main__':
-    app.run(debug=True)
