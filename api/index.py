@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-import fitz  # PyMuPDF
+import fitz
 from docx import Document
 import os
 import tempfile
@@ -14,7 +14,6 @@ def extract():
     file = request.files['file']
     ext = file.filename.split('.')[-1].lower()
     
-    # Save to the /tmp directory (the only writable space)
     temp = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}")
     file.save(temp.name)
     
