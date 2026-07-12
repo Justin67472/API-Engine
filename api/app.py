@@ -1,17 +1,29 @@
 import os
 import uuid
 import tempfile
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 import fitz  # PyMuPDF
 from docx import Document
 from flask_cors import CORS
+from dotenv import load_dotenv
+from elevenlabs.client import ElevenLabs
+
+# Load environment variables from .env
+load_dotenv()
+
 app = Flask(__name__)
 CORS(app)
-# Temporary in-memory dictionary to store extracted texts.
-# Note: For production with heavy traffic, replace this with Redis or a database (SQLite/PostgreSQL)
-EXTRACTED_STORE = {}
 
+# Temporary in-memory dictionary to store extracted texts.
+EXTRACTED_STORE = {}
 ALLOWED_EXTENSIONS = {'txt', 'pdf', 'docx'}
+
+# Initialize ElevenLabs Client using the loaded environment key
+api_key = os.getenv("ELEVENLABS_API_KEY")
+client = ElevenLabs(api_key=api_key)
+
+# Global path definition for the temporary output file
+AUDIO_OUTPUT_PATH = os.path.join(tempfile.gettempdir(), "generated_podcast.mp3")
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -20,7 +32,6 @@ def process_and_extract(file):
     """Saves the uploaded file temporarily, extracts text, and deletes the file."""
     ext = file.filename.rsplit('.', 1)[1].lower()
     
-    # Create a temporary file on the server
     fd, temp_path = tempfile.mkstemp(suffix=f".{ext}")
     os.close(fd)
     file.save(temp_path)
@@ -44,32 +55,68 @@ def process_and_extract(file):
         extracted_text = f"An error occurred during extraction: {str(e)}"
         
     finally:
-        # Clean up: Always delete the temporary file after extraction
         if os.path.exists(temp_path):
             os.remove(temp_path)
             
     return extracted_text
 
+# ============================================================
+# NEW ENDPOINT: GENERATE PODCAST AUDIO FROM POLISHED TEXT
+# ============================================================
+@app.route('/generate-podcast', methods=['POST'])
+def generate_podcast():
+    try:
+        # 1. Parse JSON payload sent from the React Native app
+        data = request.get_json() or {}
+        text_to_speak = data.get("text")
+        
+        if not text_to_speak:
+            return jsonify({"error": "No text provided in the request body"}), 400
+        
+        print(f"⏳ Forwarding text to ElevenLabs: {text_to_speak[:40]}...")
+
+        # 2. Request TTS from ElevenLabs using the verified free Rachel ID
+        audio_response = client.text_to_speech.convert(
+            text=text_to_speak,
+            voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel (Free Tier Friendly)
+            model_id="eleven_multilingual_v2"
+        )
+        
+        # 3. Stream incoming chunks into our audio path destination
+        with open(AUDIO_OUTPUT_PATH, "wb") as f:
+            for chunk in audio_response:
+                if chunk:
+                    f.write(chunk)
+                    
+        print("✅ MP3 generation finalized. Dispatching file back to the application...")
+
+        # 4. Stream the raw file attachment back to the Expo frontend
+        return send_file(
+            AUDIO_OUTPUT_PATH,
+            mimetype="audio/mpeg",
+            as_attachment=True,
+            download_name="podcast.mp3"
+        )
+
+    except Exception as e:
+        print(f"❌ Audio API Generation Error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# ============================================================
+# EXISTING EXTRACTION ENDPOINTS
+# ============================================================
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    # 1. Check if the request contains a file
     if 'file' not in request.files:
         return jsonify({"error": "No file part in the request"}), 400
         
     file = request.files['file']
-    
-    # 2. Check if the user actually selected a file
     if file.filename == '':
         return jsonify({"error": "No file selected"}), 400
         
-    # 3. Process the file if it has an allowed extension
     if file and allowed_file(file.filename):
         text = process_and_extract(file)
-        
-        # Generate a unique tracking ID for this extraction
         text_id = str(uuid.uuid4())
-        
-        # Store the text temporarily
         EXTRACTED_STORE[text_id] = text
         
         return jsonify({
@@ -82,14 +129,13 @@ def upload_file():
 
 @app.route('/extracted/<text_id>', methods=['GET'])
 def get_extracted_text(text_id):
-    """Endpoint for other apps (or the frontend) to fetch the extracted text."""
     if text_id in EXTRACTED_STORE:
         return jsonify({
             "text_id": text_id,
             "content": EXTRACTED_STORE[text_id]
         }), 200
-        
     return jsonify({"error": "Text not found or has expired."}), 404
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    # Binding to 0.0.0.0 makes the API visible to your local network/Expo development tools
+    app.run(host='0.0.0.0', port=5000, debug=True)

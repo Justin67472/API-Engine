@@ -1,0 +1,21 @@
+# Secret Environment Variables (Blocks root .env and api/.env)
+.env
+**/.env
+
+# Python compilation cache (Cleans up your workspace)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local generated output files
+output.mp3
+
+# Virtual Environments 
+.venv/
+venv/
+ENV/
+
+# OS-specific clutter
+.DS_Store
+Thumbs.db
