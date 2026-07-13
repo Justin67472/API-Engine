@@ -78,7 +78,7 @@ def generate_podcast():
         # 2. Request TTS from ElevenLabs using the verified free Rachel ID
         audio_response = client.text_to_speech.convert(
             text=text_to_speak,
-            voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel (Free Tier Friendly)
+            voice_id="Xb7hH8MSUJpSbSDYk0k2",  # Rachel (Free Tier Friendly)
             model_id="eleven_multilingual_v2"
         )
         
