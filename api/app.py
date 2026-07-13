@@ -1,15 +1,11 @@
 import os
 import uuid
 import tempfile
-from flask import Flask, request, jsonify, send_file
 import fitz  # PyMuPDF
 from docx import Document
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-from dotenv import load_dotenv
-from elevenlabs.client import ElevenLabs
-
-# Load environment variables from .env
-load_dotenv()
+import pyttsx3
 
 app = Flask(__name__)
 CORS(app)
@@ -17,10 +13,6 @@ CORS(app)
 # Temporary in-memory dictionary to store extracted texts.
 EXTRACTED_STORE = {}
 ALLOWED_EXTENSIONS = {'txt', 'pdf', 'docx'}
-
-# Initialize ElevenLabs Client using the loaded environment key
-api_key = os.getenv("ELEVENLABS_API_KEY")
-client = ElevenLabs(api_key=api_key)
 
 # Global path definition for the temporary output file
 AUDIO_OUTPUT_PATH = os.path.join(tempfile.gettempdir(), "generated_podcast.mp3")
@@ -59,8 +51,9 @@ def process_and_extract(file):
             os.remove(temp_path)
             
     return extracted_text
+
 # ============================================================
-# UPDATED ENDPOINT: HANDLES LARGE TEXTS BY CHUNKING
+# ENDPOINT: HANDLES TEXT TO AUDIO GENERATION VIA OFFLINE TTS (ZIRA)
 # ============================================================
 @app.route('/generate-podcast', methods=['POST'])
 def generate_podcast():
@@ -71,32 +64,44 @@ def generate_podcast():
         if not text_to_speak:
             return jsonify({"error": "No text provided in the request body"}), 400
         
-        # 1. Break text down into safety blocks under ElevenLabs' 10,000 limit
-        MAX_CHARS = 8000  # 8k keeps a safe margin away from the hard 10k ceiling
-        text_chunks = [text_to_speak[i:i + MAX_CHARS] for i in range(0, len(text_to_speak), MAX_CHARS)]
+        print(f"⏳ Processing offline TTS for {len(text_to_speak)} characters...")
+
+        # 1. Initialize the engine inside the request thread
+        engine = pyttsx3.init()
         
-        print(f"⏳ Text length: {len(text_to_speak)} characters. Split into {len(text_chunks)} payload chunk(s).")
+        # 2. Configure target Persona (Search for Microsoft Zira explicitly)
+        voices = engine.getProperty('voices')
+        zira_voice_id = None
+        
+        for voice in voices:
+            if "zira" in voice.name.lower():
+                zira_voice_id = voice.id
+                break
+        
+        if zira_voice_id:
+            engine.setProperty('voice', zira_voice_id)
+            print(f"🎙️ Persona matched successfully: Zira")
+        elif len(voices) > 1:
+            # Fallback to index 1 if name matching behaves weirdly
+            engine.setProperty('voice', voices[1].id)
+            print(f"🎙️ Persona fallback used: Index 1 ({voices[1].name})")
+        else:
+            print("⚠️ Zira voice not detected on this system context. Using system default.")
 
-        # 2. Open our temporary output file in binary write mode
-        with open(AUDIO_OUTPUT_PATH, "wb") as f:
-            for idx, chunk in enumerate(text_chunks):
-                print(f"🎙️ Processing chunk {idx + 1}/{len(text_chunks)} ({len(chunk)} chars)...")
-                
-                # Fetch TTS bytes for the current text slice
-                audio_response = client.text_to_speech.convert(
-                    text=chunk,
-                    voice_id="Xb7hH8MSUJpSbSDYk0k2",  # Rachel Free Tier
-                    model_id="eleven_multilingual_v2"
-                )
-                
-                # Stream the binary chunks right into the single combined file
-                for audio_bytes in audio_response:
-                    if audio_bytes:
-                        f.write(audio_bytes)
-                        
-        print("✅ Combined MP3 generation finalized. Dispatching file back to application...")
+        # 3. Adjust the speaking rate speed (160 matches well with Zira's cadence)
+        engine.setProperty('rate', 160)
 
-        # 3. Stream the raw file attachment back to the Expo frontend
+        # 4. Clean up any leftover file from a previous request
+        if os.path.exists(AUDIO_OUTPUT_PATH):
+            os.remove(AUDIO_OUTPUT_PATH)
+
+        # 5. Render directly into the temporary output MP3 path
+        engine.save_to_file(text_to_speak, AUDIO_OUTPUT_PATH)
+        engine.runAndWait()
+        
+        print("✅ Offline audio generation finalized. Dispatching file back to application...")
+
+        # 6. Stream the file back to the Expo mobile frontend
         return send_file(
             AUDIO_OUTPUT_PATH,
             mimetype="audio/mpeg",
@@ -105,8 +110,9 @@ def generate_podcast():
         )
 
     except Exception as e:
-        print(f"❌ Audio API Generation Error: {str(e)}")
+        print(f"❌ Local TTS Generation Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
 # ============================================================
 # EXISTING EXTRACTION ENDPOINTS
 # ============================================================
