@@ -1,11 +1,11 @@
 import os
 import uuid
 import tempfile
+from flask import Flask, request, jsonify, send_file
 import fitz  # PyMuPDF
 from docx import Document
-from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-import pyttsx3
+from gtts import gTTS
 
 app = Flask(__name__)
 CORS(app)
@@ -53,7 +53,7 @@ def process_and_extract(file):
     return extracted_text
 
 # ============================================================
-# ENDPOINT: HANDLES TEXT TO AUDIO GENERATION VIA OFFLINE TTS (ZIRA)
+# ENDPOINT: HANDLES TEXT TO AUDIO GENERATION VIA DEPLOYABLE gTTS
 # ============================================================
 @app.route('/generate-podcast', methods=['POST'])
 def generate_podcast():
@@ -64,44 +64,21 @@ def generate_podcast():
         if not text_to_speak:
             return jsonify({"error": "No text provided in the request body"}), 400
         
-        print(f"⏳ Processing offline TTS for {len(text_to_speak)} characters...")
+        print(f"⏳ Processing cloud-safe gTTS generation for {len(text_to_speak)} characters...")
 
-        # 1. Initialize the engine inside the request thread
-        engine = pyttsx3.init()
-        
-        # 2. Configure target Persona (Search for Microsoft Zira explicitly)
-        voices = engine.getProperty('voices')
-        zira_voice_id = None
-        
-        for voice in voices:
-            if "zira" in voice.name.lower():
-                zira_voice_id = voice.id
-                break
-        
-        if zira_voice_id:
-            engine.setProperty('voice', zira_voice_id)
-            print(f"🎙️ Persona matched successfully: Zira")
-        elif len(voices) > 1:
-            # Fallback to index 1 if name matching behaves weirdly
-            engine.setProperty('voice', voices[1].id)
-            print(f"🎙️ Persona fallback used: Index 1 ({voices[1].name})")
-        else:
-            print("⚠️ Zira voice not detected on this system context. Using system default.")
-
-        # 3. Adjust the speaking rate speed (160 matches well with Zira's cadence)
-        engine.setProperty('rate', 160)
-
-        # 4. Clean up any leftover file from a previous request
+        # 1. Clean up any leftover file from a previous request
         if os.path.exists(AUDIO_OUTPUT_PATH):
             os.remove(AUDIO_OUTPUT_PATH)
 
-        # 5. Render directly into the temporary output MP3 path
-        engine.save_to_file(text_to_speak, AUDIO_OUTPUT_PATH)
-        engine.runAndWait()
+        # 2. Pass text to Google TTS (lang='en' sets a clear female persona, slow=False keeps normal speed)
+        tts = gTTS(text=text_to_speak, lang='en', slow=False)
         
-        print("✅ Offline audio generation finalized. Dispatching file back to application...")
+        # 3. Save the stream right into the temporary mp3 file location
+        tts.save(AUDIO_OUTPUT_PATH)
+        
+        print("✅ Cloud audio generation finalized. Dispatching file back to application...")
 
-        # 6. Stream the file back to the Expo mobile frontend
+        # 4. Stream the file back to the Expo mobile frontend
         return send_file(
             AUDIO_OUTPUT_PATH,
             mimetype="audio/mpeg",
@@ -110,7 +87,7 @@ def generate_podcast():
         )
 
     except Exception as e:
-        print(f"❌ Local TTS Generation Error: {str(e)}")
+        print(f"❌ Cloud TTS Generation Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # ============================================================
@@ -148,5 +125,4 @@ def get_extracted_text(text_id):
     return jsonify({"error": "Text not found or has expired."}), 404
 
 if __name__ == '__main__':
-    # Binding to 0.0.0.0 makes the API visible to your local network/Expo development tools
     app.run(host='0.0.0.0', port=5000, debug=True)
