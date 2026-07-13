@@ -85,7 +85,7 @@ def generate_podcast():
                 # Fetch TTS bytes for the current text slice
                 audio_response = client.text_to_speech.convert(
                     text=chunk,
-                    voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel Free Tier
+                    voice_id="Xb7hH8MSUJpSbSDYk0k2",  # Rachel Free Tier
                     model_id="eleven_multilingual_v2"
                 )
                 
