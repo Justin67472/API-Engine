@@ -59,38 +59,44 @@ def process_and_extract(file):
             os.remove(temp_path)
             
     return extracted_text
-
 # ============================================================
-# NEW ENDPOINT: GENERATE PODCAST AUDIO FROM POLISHED TEXT
+# UPDATED ENDPOINT: HANDLES LARGE TEXTS BY CHUNKING
 # ============================================================
 @app.route('/generate-podcast', methods=['POST'])
 def generate_podcast():
     try:
-        # 1. Parse JSON payload sent from the React Native app
         data = request.get_json() or {}
         text_to_speak = data.get("text")
         
         if not text_to_speak:
             return jsonify({"error": "No text provided in the request body"}), 400
         
-        print(f"⏳ Forwarding text to ElevenLabs: {text_to_speak[:40]}...")
-
-        # 2. Request TTS from ElevenLabs using the verified free Rachel ID
-        audio_response = client.text_to_speech.convert(
-            text=text_to_speak,
-            voice_id="Xb7hH8MSUJpSbSDYk0k2",  # Rachel (Free Tier Friendly)
-            model_id="eleven_multilingual_v2"
-        )
+        # 1. Break text down into safety blocks under ElevenLabs' 10,000 limit
+        MAX_CHARS = 8000  # 8k keeps a safe margin away from the hard 10k ceiling
+        text_chunks = [text_to_speak[i:i + MAX_CHARS] for i in range(0, len(text_to_speak), MAX_CHARS)]
         
-        # 3. Stream incoming chunks into our audio path destination
-        with open(AUDIO_OUTPUT_PATH, "wb") as f:
-            for chunk in audio_response:
-                if chunk:
-                    f.write(chunk)
-                    
-        print("✅ MP3 generation finalized. Dispatching file back to the application...")
+        print(f"⏳ Text length: {len(text_to_speak)} characters. Split into {len(text_chunks)} payload chunk(s).")
 
-        # 4. Stream the raw file attachment back to the Expo frontend
+        # 2. Open our temporary output file in binary write mode
+        with open(AUDIO_OUTPUT_PATH, "wb") as f:
+            for idx, chunk in enumerate(text_chunks):
+                print(f"🎙️ Processing chunk {idx + 1}/{len(text_chunks)} ({len(chunk)} chars)...")
+                
+                # Fetch TTS bytes for the current text slice
+                audio_response = client.text_to_speech.convert(
+                    text=chunk,
+                    voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel Free Tier
+                    model_id="eleven_multilingual_v2"
+                )
+                
+                # Stream the binary chunks right into the single combined file
+                for audio_bytes in audio_response:
+                    if audio_bytes:
+                        f.write(audio_bytes)
+                        
+        print("✅ Combined MP3 generation finalized. Dispatching file back to application...")
+
+        # 3. Stream the raw file attachment back to the Expo frontend
         return send_file(
             AUDIO_OUTPUT_PATH,
             mimetype="audio/mpeg",
@@ -101,7 +107,6 @@ def generate_podcast():
     except Exception as e:
         print(f"❌ Audio API Generation Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
 # ============================================================
 # EXISTING EXTRACTION ENDPOINTS
 # ============================================================
