@@ -6,7 +6,7 @@ from flask import Flask, request, jsonify, send_file
 import fitz  # PyMuPDF
 from docx import Document
 from flask_cors import CORS
-import edge_tts  # 🌟 Replaced gTTS with edge-tts
+import edge_tts  # 🌟 Upgraded to edge-tts
 
 app = Flask(__name__)
 CORS(app)
@@ -25,7 +25,7 @@ def process_and_extract(file):
     """Saves the uploaded file temporarily, extracts text, and deletes the file."""
     ext = file.filename.rsplit('.', 1)[1].lower()
     
-    fd, temp_path = tempfile.mkstemp(suffix=f\".{ext}\")
+    fd, temp_path = tempfile.mkstemp(suffix=f".{ext}")
     os.close(fd)
     file.save(temp_path)
     
@@ -38,60 +38,57 @@ def process_and_extract(file):
         elif ext == 'pdf':
             doc = fitz.open(temp_path)
             for page in doc:
-                extracted_text += page.get_text()
+                extracted_text += page.get_text() + "\n"
                 
         elif ext == 'docx':
             doc = Document(temp_path)
-            extracted_text = "\n".join([p.text for p in doc.paragraphs])
+            extracted_text = "\n".join([para.text for para in doc.paragraphs])
             
-    finally:
-        os.remove(temp_path)
+    except Exception as e:
+        extracted_text = f"An error occurred during extraction: {str(e)}"
         
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
     return extracted_text
 
-# 🌟 HELPER FUNCTION TO RUN ASYNC EDGE-TTS INSIDE FLASK
+# Helper to execute async edge-tts generation synchronously inside Flask
 def run_edge_tts(text, output_path, voice="en-US-EmmaNeural"):
     async def amain():
         communicate = edge_tts.Communicate(text, voice)
         await communicate.save(output_path)
-    
-    # Run the async loop synchronously for the Flask worker thread
     asyncio.run(amain())
 
 # ============================================================
-# NEW REPLACED EDGE-TTS AUDIO GENERATION ENDPOINT
+# ENDPOINT: HANDLES TEXT TO AUDIO GENERATION VIA EDGE-TTS
 # ============================================================
-@app.route('/generate-audio/<text_id>', methods=['POST'])
-def generate_audio_endpoint(text_id):
-    print(f"🎵 Received audio generation request for text_id: {text_id}")
-    
-    if text_id not in EXTRACTED_STORE:
-        print(f"❌ Error: text_id {text_id} not found in store.")
-        return jsonify({"error": "Invalid or missing text_id"}), 404
-
-    text_to_convert = EXTRACTED_STORE[text_id]
-    
-    # Simple fallback check if text payload is empty
-    if not text_to_convert.strip():
-        text_to_convert = "The document layout was processed, but no readable text could be extracted."
-
+@app.route('/generate-podcast', methods=['POST'])
+def generate_podcast():
     try:
-        print("⏳ Generating premium streaming audio via Microsoft Neural Engine...")
+        data = request.get_json() or {}
+        text_to_speak = data.get("text")
         
-        # Clean up any leftover file if it exists from a previous generation run
+        if not text_to_speak:
+            return jsonify({"error": "No text provided in the request body"}), 400
+        
+        print(f"⏳ Processing cloud-safe edge-tts generation for {len(text_to_speak)} characters...")
+
+        # 1. Clean up any leftover file from a previous request
         if os.path.exists(AUDIO_OUTPUT_PATH):
             os.remove(AUDIO_OUTPUT_PATH)
 
-        # Generate audio using edge-tts
-        run_edge_tts(text_to_convert, AUDIO_OUTPUT_PATH, voice="en-US-EmmaNeural")
+        # 2. Generate premium neural speech
+        run_edge_tts(text_to_speak, AUDIO_OUTPUT_PATH, voice="en-US-EmmaNeural")
         
-        print(f"✅ Premium Neural Audio successfully saved to: {AUDIO_OUTPUT_PATH}")
-        
+        print("✅ Cloud audio generation finalized. Dispatching file back to application...")
+
+        # 3. Stream the file back to the Expo mobile frontend
         return send_file(
             AUDIO_OUTPUT_PATH,
             mimetype="audio/mpeg",
             as_attachment=True,
-            download_name="generated_podcast.mp3"
+            download_name="podcast.mp3"
         )
 
     except Exception as e:
@@ -128,10 +125,9 @@ def get_extracted_text(text_id):
     if text_id in EXTRACTED_STORE:
         return jsonify({
             "text_id": text_id,
-            "text": EXTRACTED_STORE[text_id]
+            "content": EXTRACTED_STORE[text_id]
         }), 200
-    return jsonify({"error": "Text ID not found"}), 404
+    return jsonify({"error": "Text not found or has expired."}), 404
 
 if __name__ == '__main__':
-    # Cloud-friendly local testing initialization
     app.run(host='0.0.0.0', port=5000, debug=True)
